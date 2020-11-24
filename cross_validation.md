@@ -6,6 +6,8 @@ Alexey Abramov
   - [Setup](#setup)
   - [Simulated dataset](#simulated-dataset)
       - [Cross- validation](#cross--validation)
+  - [Cross-validation with modelr
+    package](#cross-validation-with-modelr-package)
   - [Loading the data.](#loading-the-data.)
 
 # Setup
@@ -14,14 +16,14 @@ Alexey Abramov
 library(tidyverse)
 ```
 
-    ## ── Attaching packages ─────────────────────────────────────── tidyverse 1.3.0 ──
+    ## ── Attaching packages ───────────────────────────────────────────────────────── tidyverse 1.3.0 ──
 
     ## ✓ ggplot2 3.3.2     ✓ purrr   0.3.4
     ## ✓ tibble  3.0.3     ✓ dplyr   1.0.2
     ## ✓ tidyr   1.1.2     ✓ stringr 1.4.0
     ## ✓ readr   1.3.1     ✓ forcats 0.5.0
 
-    ## ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+    ## ── Conflicts ──────────────────────────────────────────────────────────── tidyverse_conflicts() ──
     ## x dplyr::filter() masks stats::filter()
     ## x dplyr::lag()    masks stats::lag()
 
@@ -155,19 +157,121 @@ Now considering prediction accurary.
 rmse(linear_mod, test_df)
 ```
 
-    ## [1] 0.9887422
+    ## [1] 0.6551062
 
 ``` r
 rmse(smooth_mod, test_df)
 ```
 
-    ## [1] 0.3668859
+    ## [1] 0.3238845
 
 ``` r
 rmse(wiggly_mod, test_df)
 ```
 
-    ## [1] 0.4429184
+    ## [1] 0.3413744
+
+# Cross-validation with modelr package
+
+``` r
+cv_df = 
+  crossv_mc(nonlin_df, 100)
+```
+
+What is happening here… And then we bring it out and show it as a tibble
+so we can see the lists and dataframes.
+
+``` r
+cv_df %>% pull(train) %>% .[[1]] %>% as_tibble()
+```
+
+    ## # A tibble: 79 x 3
+    ##       id      x       y
+    ##    <int>  <dbl>   <dbl>
+    ##  1     2 0.560   0.0800
+    ##  2     3 0.234   0.727 
+    ##  3     4 0.0512  0.922 
+    ##  4     5 0.429   0.894 
+    ##  5     6 0.216   1.72  
+    ##  6     7 0.911  -2.41  
+    ##  7     8 0.181   0.894 
+    ##  8    10 0.528   0.723 
+    ##  9    12 0.628   0.152 
+    ## 10    13 0.252   0.583 
+    ## # … with 69 more rows
+
+This step is only necessary for the gam function which requires a
+tibble, and won’t work for list columns.
+
+``` r
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+    )
+```
+
+Let’s try to fit models and get RMSEs for them. map2 is used because we
+have two inputs into our iteration argument.
+
+map2\_dbl is a way to see the actual number.
+
+``` r
+cv_df = 
+  cv_df %>% 
+  mutate(
+    linear_mod = map(.x = train, ~lm(y ~ x, data = .x)),
+    smooth_mod = map(.x = train, ~gam(y ~ s(x), data = .x)),
+    wiggly_mod = map(.x = train, ~gam(y ~ s(x, k = 30), sp = 10e-6, data = .x))
+    ) %>% 
+  mutate(
+    rmse_linear = map2_dbl(.x = linear_mod, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_smooth = map2_dbl(.x = smooth_mod, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_wiggly = map2_dbl(.x = wiggly_mod, .y = test, ~rmse(model = .x, data = .y))
+  )
+```
+
+What do these results say about the model choices?
+
+``` r
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  ggplot(aes(x = model, y = rmse)) +
+  geom_violin()
+```
+
+<img src="cross_validation_files/figure-gfm/unnamed-chunk-14-1.png" width="90%" />
+
+The smooth model appears to be doing better.
+
+``` r
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  group_by(model) %>% 
+  summarize(avg_rmse = mean(rmse))
+```
+
+    ## `summarise()` ungrouping output (override with `.groups` argument)
+
+    ## # A tibble: 3 x 2
+    ##   model  avg_rmse
+    ##   <chr>     <dbl>
+    ## 1 linear    0.751
+    ## 2 smooth    0.312
+    ## 3 wiggly    0.363
 
 # Loading the data.
 

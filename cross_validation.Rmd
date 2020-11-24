@@ -117,6 +117,83 @@ rmse(smooth_mod, test_df)
 rmse(wiggly_mod, test_df)
 ```
 
+# Cross-validation with modelr package
+
+```{r}
+cv_df = 
+  crossv_mc(nonlin_df, 100)
+```
+
+What is happening here...
+And then we bring it out and show it as a tibble so we can see the lists and dataframes.
+
+```{r}
+cv_df %>% pull(train) %>% .[[1]] %>% as_tibble()
+```
+
+
+This step is only necessary for the gam function which requires a tibble, and won't work for list columns.
+
+```{r}
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+    )
+```
+
+Let's try to fit models and get RMSEs for them.
+map2 is used because we have two inputs into our iteration argument.
+
+map2_dbl is a way to see the actual number.
+
+```{r}
+cv_df = 
+  cv_df %>% 
+  mutate(
+    linear_mod = map(.x = train, ~lm(y ~ x, data = .x)),
+    smooth_mod = map(.x = train, ~gam(y ~ s(x), data = .x)),
+    wiggly_mod = map(.x = train, ~gam(y ~ s(x, k = 30), sp = 10e-6, data = .x))
+    ) %>% 
+  mutate(
+    rmse_linear = map2_dbl(.x = linear_mod, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_smooth = map2_dbl(.x = smooth_mod, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_wiggly = map2_dbl(.x = wiggly_mod, .y = test, ~rmse(model = .x, data = .y))
+  )
+```
+
+What do these results say about the model choices?
+
+```{r}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  ggplot(aes(x = model, y = rmse)) +
+  geom_violin()
+```
+
+The smooth model appears to be doing better.  
+
+```{r}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  group_by(model) %>% 
+  summarize(avg_rmse = mean(rmse))
+```
+
+
 # Loading the data.
 
 ```{r}
